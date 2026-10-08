@@ -254,7 +254,7 @@
     }
     if (z.source_id) box.append(node('p', 'Source: ' + z.source_id));
 
-    // Display all historical observations for this zone across all dates
+    // Display complete historical observation timeline for this zone across all dates
     const h = (bundle.observations || [])
       .filter(o => o.zone_id === z.zone_id)
       .sort((a, b) => String(a.date).localeCompare(String(b.date)));
@@ -307,7 +307,6 @@
         if (!meetsThreshold) {
           status = 'withheld';
         } else {
-          // Check if precomputed run had an anomaly or calculate deficit
           const baseZ = precomputed && precomputed.zones && precomputed.zones.find(z => z.zone_id === o.zone_id);
           if (baseZ && baseZ.status === 'inspect') {
             status = 'inspect';
@@ -317,6 +316,8 @@
             status = 'pending';
           }
         }
+
+        const isTask = status === 'inspect';
 
         return {
           zone_id: o.zone_id,
@@ -331,8 +332,10 @@
           valid_coverage: Number(o.valid_coverage),
           status,
           observation_count: (bundle.observations || []).filter(item => item.zone_id === o.zone_id).length,
-          persistence_count: status === 'inspect' ? 2 : 0,
-          question: status === 'inspect' ? 'Check water delivery and nozzle condition in this sector; review soil variation.' : 'Routine monitoring; crop condition within expected range.',
+          persistence_count: isTask ? 2 : 0,
+          question: isTask
+            ? `Sector ${String(sector + 1).padStart(2, '0')}: Relative NDVI deficit of ${(deficit * 100).toFixed(1)}% vs ring median. Inspect nozzle pressure, emitter clog, or localized soil stress.`
+            : 'Crop condition within expected bounds across this sector.',
           source_id: o.source_id,
           synthetic: bundle.synthetic_demo
         };
