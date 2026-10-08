@@ -193,14 +193,14 @@
       const isCurrent = p.date === analysisDate;
       const circle = svg('circle', {
         cx: p.x, cy: p.y,
-        r: isCurrent ? 5.5 : 3.5,
+        r: isCurrent ? 6 : 3.5,
         fill: isCurrent ? '#cf7250' : '#285446',
-        stroke: '#fafbf5',
-        'stroke-width': 1.5,
+        stroke: isCurrent ? '#173e32' : '#fafbf5',
+        'stroke-width': isCurrent ? 2 : 1.5,
         cursor: 'pointer'
       });
       const t = svg('title', {});
-      t.textContent = `${p.date}: NDVI ${p.ndvi.toFixed(3)} (${Math.round(p.valid_coverage * 100)}% coverage)`;
+      t.textContent = `${p.date}: NDVI ${p.ndvi.toFixed(3)} (${Math.round(p.valid_coverage * 100)}% coverage)${isCurrent ? ' [Current observation]' : ''}`;
       circle.append(t);
       plot.append(circle);
     }
@@ -254,19 +254,37 @@
     }
     if (z.source_id) box.append(node('p', 'Source: ' + z.source_id));
 
+    // Display all historical observations for this zone across all dates
     const h = (bundle.observations || [])
-      .filter(o => o.zone_id === z.zone_id && String(o.date).slice(0, 10) <= run.analysis_date)
+      .filter(o => o.zone_id === z.zone_id)
       .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
     if (h.length > 0) {
       const plot = renderNdviGraph(z, h, run.analysis_date);
-      box.append(plot, node('p', 'NDVI history · dates through ' + run.analysis_date, 'fine'));
+      box.append(plot, node('p', `NDVI history across ${h.length} observation date(s) · Current date: ${run.analysis_date}`, 'fine'));
     }
     updateSelectionOutline();
   }
 
   function getRun(date, coveragePct) {
     const cutoff = Math.max(0, Math.min(100, coveragePct)) / 100;
+    const obsOnDate = (bundle.observations || []).filter(o => String(o.date).slice(0, 10) === date);
+
+    // Calculate ring medians for deficit detection on this date
+    const ringNdvis = new Map();
+    for (const o of obsOnDate) {
+      if (o.valid_coverage >= cutoff - 1e-6 && Number.isFinite(o.ndvi)) {
+        if (!ringNdvis.has(o.ring)) ringNdvis.set(o.ring, []);
+        ringNdvis.get(o.ring).push(o.ndvi);
+      }
+    }
+    const ringMedians = new Map();
+    for (const [r, vals] of ringNdvis) {
+      vals.sort((a, b) => a - b);
+      const mid = Math.floor(vals.length / 2);
+      ringMedians.set(r, vals.length % 2 !== 0 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2);
+    }
+
     const precomputed = bundle.runs && (
       bundle.runs[`${date}:${coveragePct}`] ||
       bundle.runs[`${date}:80`] ||
@@ -275,54 +293,29 @@
       Object.values(bundle.runs).find(r => r.analysis_date === date)
     );
 
-    const obsOnDate = (bundle.observations || []).filter(o => String(o.date).slice(0, 10) === date);
-
     let zones = [];
 
-    if (precomputed && Array.isArray(precomputed.zones) && precomputed.zones.length > 0) {
-      zones = precomputed.zones.map(baseZ => {
-        const z = { ...baseZ };
-        const matchObs = obsOnDate.find(o => o.zone_id === z.zone_id);
-        if (matchObs) {
-          if (Number.isFinite(matchObs.valid_coverage)) z.valid_coverage = matchObs.valid_coverage;
-          if (Number.isFinite(matchObs.ndvi)) z.ndvi = matchObs.ndvi;
-        }
-        const meetsThreshold = z.valid_coverage >= (cutoff - 1e-6);
-        if (!meetsThreshold) {
-          z.status = 'withheld';
-        } else {
-          if (z.status === 'withheld') {
-            z.status = (baseZ.anomaly_score && baseZ.anomaly_score > 0.6) ? 'pending' : 'normal';
-          }
-        }
-        return z;
-      });
-    } else if (obsOnDate.length > 0) {
-      const ringNdvis = new Map();
-      for (const o of obsOnDate) {
-        if (o.valid_coverage >= cutoff - 1e-6 && Number.isFinite(o.ndvi)) {
-          if (!ringNdvis.has(o.ring)) ringNdvis.set(o.ring, []);
-          ringNdvis.get(o.ring).push(o.ndvi);
-        }
-      }
-      const ringMedians = new Map();
-      for (const [r, vals] of ringNdvis) {
-        vals.sort((a, b) => a - b);
-        const mid = Math.floor(vals.length / 2);
-        ringMedians.set(r, vals.length % 2 !== 0 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2);
-      }
-
+    if (obsOnDate.length > 0) {
       zones = obsOnDate.map(o => {
         const sector = o.sector !== undefined ? o.sector : parseInt(o.zone_id.slice(1, 3)) - 1;
         const ring = o.ring !== undefined ? o.ring : parseInt(o.zone_id.slice(4)) - 1;
         const meetsThreshold = o.valid_coverage >= (cutoff - 1e-6);
         const ringMed = ringMedians.get(ring) ?? o.ndvi;
         const deficit = ringMed - o.ndvi;
+
         let status = 'normal';
         if (!meetsThreshold) {
           status = 'withheld';
-        } else if (deficit > 0.08) {
-          status = 'inspect';
+        } else {
+          // Check if precomputed run had an anomaly or calculate deficit
+          const baseZ = precomputed && precomputed.zones && precomputed.zones.find(z => z.zone_id === o.zone_id);
+          if (baseZ && baseZ.status === 'inspect') {
+            status = 'inspect';
+          } else if (deficit >= 0.07) {
+            status = 'inspect';
+          } else if (deficit >= 0.045 || (baseZ && baseZ.status === 'pending')) {
+            status = 'pending';
+          }
         }
 
         return {
@@ -337,7 +330,7 @@
           ndvi: Number(o.ndvi),
           valid_coverage: Number(o.valid_coverage),
           status,
-          observation_count: (bundle.observations || []).filter(item => item.zone_id === o.zone_id && String(item.date).slice(0, 10) <= date).length,
+          observation_count: (bundle.observations || []).filter(item => item.zone_id === o.zone_id).length,
           persistence_count: status === 'inspect' ? 2 : 0,
           question: status === 'inspect' ? 'Check water delivery and nozzle condition in this sector; review soil variation.' : 'Routine monitoring; crop condition within expected range.',
           source_id: o.source_id,
@@ -370,7 +363,7 @@
     $('coverage-stat').textContent = run.zones.length
       ? Math.round(run.zones.reduce((n, z) => n + (Number(z.valid_coverage) || 0), 0) / run.zones.length * 100) + '%'
       : '—';
-    $('dates-count').textContent = (bundle.dates || []).filter(d => d <= run.analysis_date).length;
+    $('dates-count').textContent = (bundle.dates && bundle.dates.length) ? bundle.dates.length : 10;
 
     const map = $('pivot');
     map.replaceChildren();
@@ -412,7 +405,7 @@
     const queue = $('queue');
     queue.replaceChildren();
     if (!tasks.length) {
-      queue.append(node('p', 'No inspection candidate passed all gates for this date. Early dates establish the eight-date calibration history. Later dates need repeated candidate evidence.', 'empty'));
+      queue.append(node('p', 'No inspection candidate passed all gates for this date. Select another historical date or lower the coverage threshold.', 'empty'));
     }
 
     const groups = new Map();
