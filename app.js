@@ -49,7 +49,7 @@
     $('dates-count').textContent=bundle.dates.filter(d=>d<=run.analysis_date).length;
     const map=$('pivot');map.replaceChildren();
     for (const z of run.zones) {const p=svg('path',{d:sectorPath(z.sector,z.ring),fill:colors[z.status],stroke:'#fafbf5','stroke-width':1.5,tabindex:0,role:'button','aria-label':`${z.zone_id}: ${z.status}, NDVI ${z.ndvi.toFixed(3)}`});const t=svg('title',{});t.textContent=`${z.zone_id} · ${z.status} · ${Math.round(z.valid_coverage*100)}% coverage`;p.append(t);p.addEventListener('click',()=>detail(z));p.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();detail(z);}});map.append(p);}
-    for (const [text,x,y] of [['N',250,33],['E',471,255],['S',250,480],['W',29,255]]) {const t=svg('text',{x,y,'text-anchor':'middle',fill:'#647269','font-size':13,'font-family':'Arial'});t.textContent=text;map.append(t);}
+    for (const [text,x,y] of [['N',250,33],['E',471,255],['S',250,480],['W',29,255]]) {const t=svg('text',{x,y,'text-anchor':'middle',fill:'#647269','font-size':13,'font-family':'var(--font-sans)'});t.textContent=text;map.append(t);}
     map.append(svg('circle',{cx:250,cy:250,r:5,fill:'#183e32'}));
     const queue=$('queue');queue.replaceChildren();
     if (!tasks.length) queue.append(node('p','No inspection candidate passed all gates for this date. Early dates establish the eight-date calibration history. Later dates need repeated candidate evidence.','empty'));
